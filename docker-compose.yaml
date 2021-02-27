@@ -1,0 +1,85 @@
+version: '3.7'
+services:
+
+    s3:
+        image: minio/minio:latest
+        container_name: minio-local-s3
+        ports:
+            - 9000:9000
+        environment:
+            - MINIO_ACCESS_KEY=minio
+            - MINIO_SECRET_KEY=minio123
+        command: server /data
+        networks:
+            - A
+        volumes:
+            - /home/prayag/minio-s3:/data
+
+    postgres:
+        image: postgres:9.6
+        container_name: postgres_container
+        expose:
+            - "5434"
+        environment:
+            - POSTGRES_USER=mlflow
+            - POSTGRES_PASSWORD=mlflow
+            - POSTGRES_DB=mlflow
+            - POSTGRES_HOST=mlflow
+        networks:
+            - A
+
+    mlflow:
+        build:
+            context: ./mlflow_docker
+        container_name: mlflow_container
+        depends_on:
+            - s3
+            - postgres
+        ports:
+            - "5000:5000"
+        environment:
+            - MLFLOW_S3_ENDPOINT_URL=http://s3:9000
+            - AWS_ACCESS_KEY_ID=minio
+            - AWS_SECRET_ACCESS_KEY=minio123
+        networks:
+            - A
+        entrypoint: ./wait-for-it.sh postgres:5434 -t 1 -- mlflow server --backend-store-uri postgresql://mlflow:mlflow@postgres:5432/mlflow --default-artifact-root s3://test/ --host 0.0.0.0
+
+    train:
+        build:
+            context: ./sample_project
+        container_name: training_container
+        depends_on:
+            - postgres
+            - mlflow
+            - s3
+        environment:
+            - MLFLOW_TRACKING_URI=http://mlflow:5000
+            - MLFLOW_S3_ENDPOINT_URL=http://s3:9000
+            - AWS_ACCESS_KEY_ID=minio
+            - AWS_SECRET_ACCESS_KEY=minio123
+        command: bash -c "sleep 5 && python train.py --alpha 0.5 --l1-ratio 0.1"
+        networks:
+            - A
+
+    mnist:
+        build:
+            context: ./mnist
+        container_name: mnist_container
+        depends_on:
+            - postgres
+            - mlflow
+            - s3
+        environment:
+            - MLFLOW_TRACKING_URI=http://mlflow:5000
+            - MLFLOW_S3_ENDPOINT_URL=http://s3:9000
+            - AWS_ACCESS_KEY_ID=minio
+            - AWS_SECRET_ACCESS_KEY=minio123
+        command: bash -c "sleep 5 && python train.py"
+        networks:
+            - A
+
+
+networks:
+    A:
+        driver: bridge
